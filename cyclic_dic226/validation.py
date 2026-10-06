@@ -137,6 +137,8 @@ def grid_points(p: AnalysisParams) -> tuple[np.ndarray, np.ndarray]:
     half = p.subset_size // 2
     x0, y0 = p.roi.x + half, p.roi.y + half
     x1, y1 = p.roi.x + p.roi.w - 1 - half, p.roi.y + p.roi.h - 1 - half
+    if x1 < x0 or y1 < y0:
+        raise RequestError("ROI is too small for the requested subset size")
     xs = np.arange(x0, x1 + 1, p.grid_step, dtype=np.float64)
     ys = np.arange(y0, y1 + 1, p.grid_step, dtype=np.float64)
     if xs[-1] < x1 - 1e-9:

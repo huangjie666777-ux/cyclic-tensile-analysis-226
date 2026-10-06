@@ -6,6 +6,9 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from cyclic_dic226.delivery import build_zip
+from cyclic_dic226.cyclic import (build_cyclic_gauge_spec, parse_cyclic_csv,
+                                  run_cyclic)
+from cyclic_dic226.cyclic_delivery import build_cyclic_zip
 from cyclic_dic226.pipeline import run_measurement
 from cyclic_dic226.tensile import (build_gauge_spec, load_frames_zip,
                                     parse_curve_csv, run_tensile)
@@ -247,4 +250,144 @@ async def tensile_download(
         media_type="application/zip",
         headers={"Content-Disposition":
                  'attachment; filename="cyclic226_extensometer.zip"'},
+    )
+
+
+CYCLIC_FIELDS = ("scale_mm_per_px", "roi_x", "roi_y", "roi_w", "roi_h",
+                 "subset_size", "grid_step", "search_radius", "max_iterations",
+                 "area_mm2", "p1_x", "p1_y", "p2_x", "p2_y")
+
+
+async def _prepare_cyclic(reference: UploadFile, frames: UploadFile,
+                          curve: UploadFile, form: dict):
+    try:
+        params = build_params(form)
+        spec = build_cyclic_gauge_spec(form)
+        rows = parse_cyclic_csv(await curve.read())
+        ref = decode_gray_png(await reference.read(), "reference")
+        images = load_frames_zip(await frames.read(), rows)
+    except RequestError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        result = run_cyclic(ref, images, rows, params, spec)
+    except RequestError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    form_dump = {k: form.get(k) for k in CYCLIC_FIELDS}
+    return result, form_dump
+
+
+def _cyclic_form(**kw) -> dict:
+    return {k: str(v) for k, v in kw.items()}
+
+
+def _cycle_payload(c) -> dict:
+    return {
+        "cycle_id": c.cycle_id,
+        "n_frames": len(c.frames),
+        "peak_stress_MPa": c.peak_stress_MPa,
+        "residual_strain": c.residual_strain,
+        **({} if c.residual_strain is not None
+           else {"residual_reason": c.residual_reason}),
+        "loop_work_MJ_per_m3": c.loop_work_MJ_per_m3,
+        **({} if c.loop_work_MJ_per_m3 is not None
+           else {"loop_work_reason": c.loop_work_reason}),
+        "unload_fit": ({
+            "E_MPa": c.unload_fit.E_MPa,
+            "b_MPa": c.unload_fit.b_MPa,
+            "r_squared": c.unload_fit.r_squared,
+            "n_points": c.unload_fit.n_points,
+            "stress_interval_MPa": list(c.fit_interval_MPa),
+        } if c.unload_fit is not None else {
+            "stress_interval_MPa": list(c.fit_interval_MPa),
+            "reason": c.unload_fit_reason,
+        }),
+        "modulus_retention": c.modulus_retention,
+    }
+
+
+@app.post("/cyclic/analyze", summary="Cyclic load/unload analysis: JSON result")
+async def cyclic_analyze(
+    reference: UploadFile = File(..., description="reference 8-bit gray PNG"),
+    frames: UploadFile = File(..., description="ZIP of 6..40 frame PNGs"),
+    curve: UploadFile = File(
+        ..., description="CSV: frame_id,time_s,force_N,cycle_id,phase"),
+    scale_mm_per_px: str = Form(...),
+    roi_x: str = Form(...),
+    roi_y: str = Form(...),
+    roi_w: str = Form(...),
+    roi_h: str = Form(...),
+    subset_size: str = Form(...),
+    grid_step: str = Form(...),
+    search_radius: str = Form(...),
+    max_iterations: str = Form(...),
+    area_mm2: str = Form(...),
+    p1_x: str = Form(...),
+    p1_y: str = Form(...),
+    p2_x: str = Form(...),
+    p2_y: str = Form(...),
+):
+    form = _cyclic_form(**{k: v for k, v in locals().items()
+                           if k in CYCLIC_FIELDS})
+    result, form_dump = await _prepare_cyclic(reference, frames, curve, form)
+    return {
+        "parameters": form_dump,
+        "limits": LIMITS,
+        "gauge_length0_mm": result.gauge_length0_mm,
+        "frames": [
+            {
+                "frame_id": fr.row.frame_id,
+                "time_s": fr.row.time_s,
+                "force_N": fr.row.force_N,
+                "cycle_id": fr.row.cycle_id,
+                "phase": fr.row.phase,
+                "stress_MPa": fr.stress_MPa,
+                "gauge_valid": fr.gauge_valid,
+                "length_mm": (None if not np.isfinite(fr.length_mm)
+                              else fr.length_mm),
+                "engineering_strain": (None if not np.isfinite(fr.strain)
+                                       else fr.strain),
+                "n_valid_displacement": fr.measurement.n_valid,
+            }
+            for fr in result.frames
+        ],
+        "cycles": [_cycle_payload(c) for c in result.cycles],
+        "modulus_retention_baseline": ({
+            "cycle_id": result.retention_baseline_cycle,
+            "E_MPa": result.retention_baseline_E_MPa,
+        } if result.retention_baseline_cycle is not None else {
+            "value": None,
+            "reason": result.retention_reason,
+        }),
+    }
+
+
+@app.post("/cyclic/download", summary="Cyclic load/unload analysis: result ZIP")
+async def cyclic_download(
+    reference: UploadFile = File(...),
+    frames: UploadFile = File(...),
+    curve: UploadFile = File(...),
+    scale_mm_per_px: str = Form(...),
+    roi_x: str = Form(...),
+    roi_y: str = Form(...),
+    roi_w: str = Form(...),
+    roi_h: str = Form(...),
+    subset_size: str = Form(...),
+    grid_step: str = Form(...),
+    search_radius: str = Form(...),
+    max_iterations: str = Form(...),
+    area_mm2: str = Form(...),
+    p1_x: str = Form(...),
+    p1_y: str = Form(...),
+    p2_x: str = Form(...),
+    p2_y: str = Form(...),
+):
+    form = _cyclic_form(**{k: v for k, v in locals().items()
+                           if k in CYCLIC_FIELDS})
+    result, form_dump = await _prepare_cyclic(reference, frames, curve, form)
+    archive = build_cyclic_zip(result, form_dump)
+    return Response(
+        content=archive,
+        media_type="application/zip",
+        headers={"Content-Disposition":
+                 'attachment; filename="cyclic226_cyclic.zip"'},
     )

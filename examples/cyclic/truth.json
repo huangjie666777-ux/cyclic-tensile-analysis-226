@@ -1,0 +1,47 @@
+{
+  "seed": 226,
+  "size_px": [
+    256,
+    256
+  ],
+  "E_true_MPa": 70000.0,
+  "cycles": [
+    {
+      "cycle_id": "1",
+      "peak_strain": 0.003,
+      "peak_stress_MPa": 210.0,
+      "permanent_strain": 0.0005,
+      "unload_modulus_MPa": 70000.0
+    },
+    {
+      "cycle_id": "2",
+      "peak_strain": 0.0035,
+      "peak_stress_MPa": 210.0,
+      "permanent_strain": 0.001,
+      "unload_modulus_MPa": 63000.0
+    }
+  ],
+  "poisson_ratio": 0.3,
+  "request": {
+    "scale_mm_per_px": 0.05,
+    "roi": [
+      32,
+      32,
+      192,
+      192
+    ],
+    "subset_size": 31,
+    "grid_step": 16,
+    "search_radius": 8,
+    "max_iterations": 50,
+    "area_mm2": 25.0,
+    "p1": [
+      56.0,
+      128.0
+    ],
+    "p2": [
+      200.0,
+      128.0
+    ]
+  }
+}

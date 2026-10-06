@@ -178,8 +178,8 @@ def build_gauge_spec(form: dict) -> GaugeSpec:
     hi = parse_float("fit_strain_max", form["fit_strain_max"])
     if lo < 0 or hi < 0:
         raise RequestError("fit strain bounds must be non-negative")
-    if hi < lo:
-        raise RequestError("fit_strain_max must be >= fit_strain_min")
+    if hi <= lo:
+        raise RequestError("fit_strain_max must be greater than fit_strain_min")
     if p1 == p2:
         raise RequestError("extensometer endpoints must be distinct")
     return GaugeSpec(p1, p2, area, lo, hi)
@@ -193,10 +193,11 @@ def _cell_weights(axis: np.ndarray, value: float):
 
 
 def _gauge_length_mm(m: Measurement, index: dict, xs: np.ndarray,
-                     ys: np.ndarray, spec: GaugeSpec, scale: float):
+                     ys: np.ndarray, p1_px: tuple, p2_px: tuple,
+                     scale: float):
     """Deformed endpoint distance in mm, or None when a corner is invalid."""
     deformed = []
-    for (px, py) in (spec.p1_px, spec.p2_px):
+    for (px, py) in (p1_px, p2_px):
         i, tx = _cell_weights(xs, px)
         j, ty = _cell_weights(ys, py)
         corners = (index[(round(float(xs[i]), 6), round(float(ys[j]), 6))],
@@ -257,37 +258,53 @@ def find_yield(frames: list, fit: FitResult, fit_hi: float):
     return None, "no_positive_to_nonpositive_crossing"
 
 
-def run_tensile(ref: np.ndarray, frames_img: dict, curve: list,
-                params: AnalysisParams, spec: GaugeSpec) -> TensileResult:
+@dataclass
+class GaugeContext:
+    gx: np.ndarray
+    gy: np.ndarray
+    xs: np.ndarray
+    ys: np.ndarray
+    index: dict
+    length0_mm: float
+
+
+def gauge_grid(params: AnalysisParams, p1_px: tuple, p2_px: tuple) -> GaugeContext:
+    """Reference grid + bilinear interpolation context for a two-point gauge."""
     gx, gy = grid_points(params)
     xs, ys = np.unique(gx), np.unique(gy)
     if xs.size < 2 or ys.size < 2:
         raise RequestError("grid is too small for gauge interpolation; "
                            "need at least 2x2 grid points")
-    for label, (px, py) in (("p1", spec.p1_px), ("p2", spec.p2_px)):
+    for label, (px, py) in (("p1", p1_px), ("p2", p2_px)):
         if not (xs[0] <= px <= xs[-1] and ys[0] <= py <= ys[-1]):
             raise RequestError(
                 f"extensometer endpoint {label}=({px}, {py}) lies outside the "
                 f"grid coverage x=[{xs[0]}, {xs[-1]}], y=[{ys[0]}, {ys[-1]}] px")
     index = {(round(float(gx[i]), 6), round(float(gy[i]), 6)): i
              for i in range(gx.size)}
-    length0 = float(np.hypot(spec.p2_px[0] - spec.p1_px[0],
-                             spec.p2_px[1] - spec.p1_px[1])
+    length0 = float(np.hypot(p2_px[0] - p1_px[0], p2_px[1] - p1_px[1])
                     * params.scale_mm_per_px)
+    return GaugeContext(gx, gy, xs, ys, index, length0)
 
-    first = frames_img[curve[0].frame_id]
-    validate_pair(ref, first, params)
+
+def measure_frames(ref: np.ndarray, frames_img: dict, rows: list,
+                   params: AnalysisParams, spec: GaugeSpec,
+                   ctx: GaugeContext) -> list:
+    """Measure every frame independently against the same reference image."""
+    validate_pair(ref, frames_img[rows[0].frame_id], params)
     frames = []
-    for row in curve:
+    for row in rows:
         img = frames_img[row.frame_id]
         if img.shape != ref.shape:
             raise RequestError(
                 f"frame '{row.frame_id}' size {img.shape[1]}x{img.shape[0]} "
                 f"differs from reference {ref.shape[1]}x{ref.shape[0]}")
-        m = run_measurement(ref, img, gx, gy, params)
-        length = _gauge_length_mm(m, index, xs, ys, spec,
+        m = run_measurement(ref, img, ctx.gx, ctx.gy, params)
+        length = _gauge_length_mm(m, ctx.index, ctx.xs, ctx.ys,
+                                  spec.p1_px, spec.p2_px,
                                   params.scale_mm_per_px)
-        strain = length / length0 - 1.0 if length is not None else float("nan")
+        strain = (length / ctx.length0_mm - 1.0
+                  if length is not None else float("nan"))
         frames.append(FrameResult(
             row=row,
             gauge_valid=length is not None,
@@ -296,6 +313,13 @@ def run_tensile(ref: np.ndarray, frames_img: dict, curve: list,
             stress_MPa=row.force_N / spec.area_mm2,
             measurement=m,
         ))
+    return frames
+
+
+def run_tensile(ref: np.ndarray, frames_img: dict, curve: list,
+                params: AnalysisParams, spec: GaugeSpec) -> TensileResult:
+    ctx = gauge_grid(params, spec.p1_px, spec.p2_px)
+    frames = measure_frames(ref, frames_img, curve, params, spec, ctx)
 
     in_range = [fr for fr in frames
                 if fr.gauge_valid and spec.fit_lo <= fr.strain <= spec.fit_hi]
@@ -306,5 +330,5 @@ def run_tensile(ref: np.ndarray, frames_img: dict, curve: list,
         yield_point, yield_reason = find_yield(frames, fit, spec.fit_hi)
     else:
         yield_point, yield_reason = None, "fit_failed: " + fit_reason
-    return TensileResult(params, spec, curve, frames, length0,
+    return TensileResult(params, spec, curve, frames, ctx.length0_mm,
                          fit, fit_reason, yield_point, yield_reason)

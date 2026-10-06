@@ -110,7 +110,7 @@ unzip -l result.zip
 | `curve` | CSV，列 `frame_id,time_s,force_N` | `frame_id` 唯一；`time_s` 有限且严格递增；`force_N` 非负有限 |
 | `area_mm2` | 原始截面积 | 正有限值 |
 | `p1_x,p1_y,p2_x,p2_y` | 参考图像素坐标的两个标距端点 | 两点不同且落在网格覆盖内，否则整请求 422 |
-| `fit_strain_min,fit_strain_max` | 拟合应变闭区间 | 非负且递增 |
+| `fit_strain_min,fit_strain_max` | 拟合应变闭区间 | 非负且严格递增（相等上下界拒绝） |
 
 任何非法输入（CSV/ZIP/图像/参数）都**整次拒绝**（422），不产生部分结果。
 
@@ -152,4 +152,59 @@ curl -s -o tensile_result.zip http://127.0.0.1:8000/tensile/download \
   -F area_mm2=25 -F p1_x=56 -F p1_y=128 -F p2_x=200 -F p2_y=128 \
   -F fit_strain_min=0.0002 -F fit_strain_max=0.002
 unzip -l tensile_result.zip
+```
+
+## 循环加卸载分析（/cyclic/*）
+
+在虚拟引伸计之上新增循环分析（旧 `/analyze`、`/download`、`/tensile/*` 均不变）：
+
+- `POST /cyclic/analyze`：返回 JSON（逐帧曲线 + 逐周期指标 + 模量保持率）。
+- `POST /cyclic/download`：返回 ZIP（`curve.csv` 全帧曲线、`cycles.csv` 逐周期汇总、
+  `frames/<id>_points.csv` 逐帧测量点、`result.json` 参数/标距/周期/保持率汇总）。
+
+### 输入（multipart/form-data）
+
+测量参数、`area_mm2`、`p1/p2` 标距端点与 `/tensile/*` 相同（不需要拟合区间字段）；
+`frames` 为 **6–40** 帧 PNG 的 ZIP；`curve` 为 CSV，列
+`frame_id,time_s,force_N,cycle_id,phase`。协议整体校验，任一非法**整次拒绝**（422）：
+
+- 图像与 `frame_id` 一一对应；`time_s` 严格递增；`force_N` 非负有限。
+- 同一 `cycle_id` 的行必须连续；每周先 `load` 后 `unload`，两段各至少 3 帧。
+- 加载段力不减、卸载段力不增；每周期首末力为零且峰值为正。
+
+### 计算约定
+
+- 每帧独立对同一参考图测量，复用四角有效双线性插值与工程应力应变；不重置参考、
+  不补缺测。缺测（标距无效）周期的残余应变与回线功为 `null` 并给出原因，其余周期保留。
+- 逐周期输出：峰值应力、残余应变（末帧应变 − 首帧应变）、带符号回线功密度——
+  按时间相邻点梯形积分 `∫σ dε`，不排序、不取绝对值，单位 MJ/m³（MPa×应变）。
+- 卸载模量：取该周期峰值应力 **20 %–80 % 闭区间**内的全部卸载有效点
+  （加载末帧为卸载起点，不重复积分）最小二乘拟合 `σ = Eε + b`，至少 3 个不同应变
+  且 `E > 0`，返回 `E_MPa`、`b_MPa`、`R²`。
+- 模量保持率：首个成功拟合周期为基准（保持率 1.0），其余周期给出 `E/E_基准`；
+  无任何成功拟合时基准为 `null` 及原因，不影响其他结果。
+
+### 示例
+
+```bash
+.venv/bin/python examples/generate_cyclic_sample.py
+# 生成 examples/cyclic/{reference.png, frames.zip, curve.csv, truth.json}
+# 两个循环：E=70000 MPa，周期 2 卸载软化到 63000 MPa（保持率 0.9）
+
+curl -s http://127.0.0.1:8000/cyclic/analyze \
+  -F reference=@examples/cyclic/reference.png \
+  -F frames=@examples/cyclic/frames.zip \
+  -F curve=@examples/cyclic/curve.csv \
+  -F scale_mm_per_px=0.05 -F roi_x=32 -F roi_y=32 -F roi_w=192 -F roi_h=192 \
+  -F subset_size=31 -F grid_step=16 -F search_radius=8 -F max_iterations=50 \
+  -F area_mm2=25 -F p1_x=56 -F p1_y=128 -F p2_x=200 -F p2_y=128 | python -m json.tool
+
+curl -s -o cyclic_result.zip http://127.0.0.1:8000/cyclic/download \
+  -F reference=@examples/cyclic/reference.png \
+  -F frames=@examples/cyclic/frames.zip \
+  -F curve=@examples/cyclic/curve.csv \
+  -F scale_mm_per_px=0.05 -F roi_x=32 -F roi_y=32 -F roi_w=192 -F roi_h=192 \
+  -F subset_size=31 -F grid_step=16 -F search_radius=8 -F max_iterations=50 \
+  -F area_mm2=25 -F p1_x=56 -F p1_y=128 -F p2_x=200 -F p2_y=128
+unzip -l cyclic_result.zip
 ```
