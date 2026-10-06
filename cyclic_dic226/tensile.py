@@ -178,8 +178,8 @@ def build_gauge_spec(form: dict) -> GaugeSpec:
     hi = parse_float("fit_strain_max", form["fit_strain_max"])
     if lo < 0 or hi < 0:
         raise RequestError("fit strain bounds must be non-negative")
-    if hi < lo:
-        raise RequestError("fit_strain_max must be >= fit_strain_min")
+    if hi <= lo:
+        raise RequestError("fit_strain_max must be greater than fit_strain_min")
     if p1 == p2:
         raise RequestError("extensometer endpoints must be distinct")
     return GaugeSpec(p1, p2, area, lo, hi)
@@ -259,6 +259,8 @@ def find_yield(frames: list, fit: FitResult, fit_hi: float):
 
 def run_tensile(ref: np.ndarray, frames_img: dict, curve: list,
                 params: AnalysisParams, spec: GaugeSpec) -> TensileResult:
+    first = frames_img[curve[0].frame_id]
+    validate_pair(ref, first, params)
     gx, gy = grid_points(params)
     xs, ys = np.unique(gx), np.unique(gy)
     if xs.size < 2 or ys.size < 2:
@@ -274,9 +276,6 @@ def run_tensile(ref: np.ndarray, frames_img: dict, curve: list,
     length0 = float(np.hypot(spec.p2_px[0] - spec.p1_px[0],
                              spec.p2_px[1] - spec.p1_px[1])
                     * params.scale_mm_per_px)
-
-    first = frames_img[curve[0].frame_id]
-    validate_pair(ref, first, params)
     frames = []
     for row in curve:
         img = frames_img[row.frame_id]
