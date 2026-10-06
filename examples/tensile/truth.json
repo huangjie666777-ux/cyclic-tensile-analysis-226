@@ -1,0 +1,46 @@
+{
+  "seed": 224,
+  "size_px": [
+    256,
+    256
+  ],
+  "E_true_MPa": 70000.0,
+  "hardening_MPa": 8000.0,
+  "elastic_limit_strain": 0.002,
+  "yield_strain_offset_rule": 0.0042580645161290325,
+  "applied_strains": [
+    0.0005,
+    0.001,
+    0.0015,
+    0.002,
+    0.003,
+    0.004,
+    0.005,
+    0.006
+  ],
+  "poisson_ratio": 0.3,
+  "request": {
+    "scale_mm_per_px": 0.05,
+    "roi": [
+      32,
+      32,
+      192,
+      192
+    ],
+    "subset_size": 31,
+    "grid_step": 16,
+    "search_radius": 8,
+    "max_iterations": 50,
+    "area_mm2": 25.0,
+    "p1": [
+      56.0,
+      128.0
+    ],
+    "p2": [
+      200.0,
+      128.0
+    ],
+    "fit_strain_min": 0.0002,
+    "fit_strain_max": 0.002
+  }
+}

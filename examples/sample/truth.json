@@ -1,0 +1,36 @@
+{
+  "seed": 218,
+  "size_px": [
+    256,
+    256
+  ],
+  "translation_px": [
+    3.2,
+    -2.4
+  ],
+  "F": [
+    [
+      1.012,
+      0.004
+    ],
+    [
+      0.003,
+      1.018
+    ]
+  ],
+  "brightness_gain": 1.12,
+  "brightness_offset": -14.0,
+  "suggested_request": {
+    "scale_mm_per_px": 0.05,
+    "roi": [
+      32,
+      32,
+      192,
+      192
+    ],
+    "subset_size": 31,
+    "grid_step": 16,
+    "search_radius": 8,
+    "max_iterations": 50
+  }
+}

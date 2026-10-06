@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cyclic_dic226"
+version = "0.1.0"
+description = "2D digital image correlation backend for speckle images (subset DIC + Green-Lagrange strain)"
+requires-python = ">=3.10"
+dependencies = ["fastapi>=0.115", "numpy>=2.0", "scipy>=1.15", "pillow>=10", "python-multipart>=0.0.9", "uvicorn"]
+
+[tool.setuptools.packages.find]
+include = ["cyclic_dic226*"]
+
+[project.scripts]
+cyclic226 = "cyclic_dic226.main:run"
